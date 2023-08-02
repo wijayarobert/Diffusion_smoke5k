@@ -1,0 +1,66 @@
+import os
+import numpy as np
+import cv2
+import albumentations
+from PIL import Image
+from torch.utils.data import Dataset
+
+class SegmentationBase(Dataset):
+    def __init__(self,
+                 data_txt, segmentation_root, data_root,
+                 size=None, random_crop=False, interpolation="bicubic"):
+        self.data_txt = data_txt
+        self.segmentation_root = segmentation_root
+        with open(self.data_txt, "r") as f:
+            self.data_root = f.read().splitlines()
+        self._length = len(self.data_root)
+
+        size = None if size is not None and size <= 0 else size
+        self.size = size
+        if self.size is not None:
+            self.interpolation = interpolation
+            self.interpolation = {
+                "nearest": cv2.INTER_NEAREST,
+                "bilinear": cv2.INTER_LINEAR,
+                "bicubic": cv2.INTER_CUBIC,
+                "area": cv2.INTER_AREA,
+                "lanczos": cv2.INTER_LANCZOS4}[self.interpolation]
+            self.image_rescaler = albumentations.SmallestMaxSize(max_size=self.size,
+                                                                 interpolation=self.interpolation)
+            self.center_crop = not random_crop
+            if self.center_crop:
+                self.cropper = albumentations.CenterCrop(height=self.size, width=self.size)
+            else:
+                self.cropper = albumentations.RandomCrop(height=self.size, width=self.size)
+            self.preprocessor = self.cropper
+
+    def __len__(self):
+        return self._length
+
+    def __getitem__(self, i):
+        file_path = os.path.join(self.segmentation_root, self.data_root[i])
+        image = Image.open(file_path)
+        if not image.mode == "RGB":
+            image = image.convert("RGB")
+        image = np.array(image).astype(np.uint8)
+        if self.size is not None:
+            image = self.image_rescaler(image=image)["image"]
+            processed = self.preprocessor(image=image)
+        else:
+            processed = {"image": image}
+        processed["image"] = (processed["image"] / 127.5 - 1.0).astype(np.float32)
+        return processed
+
+class CustomSegTrain(SegmentationBase):
+    def __init__(self, size=256, random_crop=False, interpolation="bicubic"):
+        super().__init__(data_txt='/home/remote/u7177316/taming-transformers/data/smoke5k_train/xx_train.txt',
+                         data_root='/home/remote/u7177316/dataset/smoke5k/train/img',
+                         segmentation_root='/home/remote/u7177316/dataset/smoke5k/train/gt',
+                         size=size, random_crop=random_crop, interpolation=interpolation)
+
+class CustomSegEval(SegmentationBase):
+    def __init__(self, size=256, random_crop=False, interpolation="bicubic"):
+        super().__init__(data_txt='/home/remote/u7177316/taming-transformers/data/smoke5k_test/xx_test.txt',
+                         data_root='/home/remote/u7177316/dataset/smoke5k/test/img',
+                         segmentation_root='/home/remote/u7177316/dataset/smoke5k/test/gt',
+                         size=size, random_crop=random_crop, interpolation=interpolation)
